@@ -17,7 +17,7 @@ target_link_libraries(vtk2pov ${VTK_LIBRARIES})
 
 set(ENABLE_BOOST ON CACHE BOOL "Enable boost support")
 if (ENABLE_BOOST)
-find_package(Boost COMPONENTS program_options)
+find_package(Boost 1.50.0 COMPONENTS program_options)
 if (NOT Boost_FOUND)
 message(FATAL_ERROR
 "
