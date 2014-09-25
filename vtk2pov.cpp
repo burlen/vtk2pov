@@ -67,15 +67,15 @@ int main(int argc, char **argv)
   po::variables_map opts;
   po::options_description optDef("Options");
   optDef.add_options()
-      ("help", "print this message")
-      ("verbosity", po::value<int>(&verbosity), "diagnostic verbosity level (0)")
-      ("name", po::value<string>(&mesh), "name of mesh (Surface)")
       ("input", po::value<string>(&input)->required(), "REQ. vtk file to process")
       ("output", po::value<string>(&output)->required(), "REQ. pov file to write to")
+      ("verbose", "diagnostic verbosity level (off)")
+      ("name", po::value<string>(&mesh), "name of mesh (Surface)")
       ("subdivision", po::value<string>(&subdivision), "subdivision type: butterfly, loop, linear (none)")
       ("ndivisions", po::value<int>(&ndivisions), "number of subdivisions (2)")
       ("gen-normals", "generate normals (off)")
-      ("pass-normals", "pass normals (off)");
+      ("pass-normals", "pass normals (off)")
+      ("help", "print this message");
   try
   {
     po::store(po::parse_command_line(argc, argv, optDef), opts);
@@ -88,6 +88,7 @@ int main(int argc, char **argv)
 
     po::notify(opts);
 
+    if (opts.count("verbose")) verbosity = 1;
     if (opts.count("gen-normals")) genNormals = 1;
     if (opts.count("pass-normals")) passNormals = 1;
   }
@@ -217,12 +218,16 @@ int main(int argc, char **argv)
   }
   pov << "}" << endl;
 
+  if (verbosity)
+  {
+    cerr << "done" << endl;
+  }
+
   if (genNormals || passNormals)
   {
     if (verbosity)
     {
-      cerr << "done" << endl
-        << "writing POVRay normals...";
+      cerr << "writing POVRay normals...";
     }
 
     // write normals
