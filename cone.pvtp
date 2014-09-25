@@ -1,0 +1,9 @@
+<VTKFile type="PPolyData" version="1.0" byte_order="LittleEndian" header_type="UInt64">
+  <PPolyData GhostLevel="0">
+    <PPoints>
+      <PDataArray type="Float32" Name="Points" NumberOfComponents="3"/>
+    </PPoints>
+    <Piece Source="cone_0.vtp"/>
+    <Piece Source="cone_1.vtp"/>
+  </PPolyData>
+</VTKFile>
