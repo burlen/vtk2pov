@@ -178,6 +178,9 @@ int main(int argc, char **argv)
   vtkPolyData *data = pdn->GetOutput();
   data->Register(0);
 
+  double bounds[6];
+  data->GetBounds(bounds);
+
   pdn->Delete();
   tf->Delete();
   sf->Delete();
@@ -192,6 +195,9 @@ int main(int argc, char **argv)
   }
 
   pov
+    << "//bounds = [" << bounds[0] << ", " << bounds[1]
+    << ", " << bounds[2] << ", " << bounds[3]
+    << ", " <<  bounds[4] << ", " << bounds[5] << "]" << endl
     << "#declare " << mesh << " = object {" << endl
     << "mesh2 {" << endl;
 

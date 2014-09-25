@@ -15,7 +15,7 @@ endif()
 include_directories(${VTK_INCLUDE_DIRS})
 target_link_libraries(vtk2pov ${VTK_LIBRARIES})
 
-set(ENABLE_BOOST OFF CACHE BOOL "Enable boost support")
+set(ENABLE_BOOST ON CACHE BOOL "Enable boost support")
 if (ENABLE_BOOST)
 find_package(Boost COMPONENTS program_options)
 if (NOT Boost_FOUND)

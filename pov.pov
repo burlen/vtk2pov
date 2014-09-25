@@ -1,9 +1,9 @@
 #include "colors.inc"
 
 light_source {
-    <0,2,2>, White
+    <0,0,0>, White
     spotlight
-    point_at <0,0,2>
+    point_at <0,0,1>
     parallel
 }
 
