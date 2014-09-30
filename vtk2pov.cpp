@@ -118,6 +118,20 @@ int main(int argc, char **argv)
 
   vtkXMLPPolyDataReader *r = vtkXMLPPolyDataReader::New();
   r->SetFileName(input.c_str());
+  int nArrays = r->GetNumberOfCellArrays();
+  for (int i = 0; i < nArrays; ++i)
+  {
+    r->SetCellArrayStatus(r->GetCellArrayName(i), 0);
+  }
+  nArrays = r->GetNumberOfPointArrays();
+  for (int i = 0; i < nArrays; ++i)
+  {
+    r->SetPointArrayStatus(r->GetPointArrayName(i), 0);
+  }
+  if (passNormals)
+  {
+    r->SetPointArrayStatus("Normals", 1);
+  }
 
   vtkCleanPolyData *cpd = vtkCleanPolyData::New();
   cpd->SetInputConnection(r->GetOutputPort());
