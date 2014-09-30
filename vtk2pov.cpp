@@ -12,6 +12,8 @@
 #include <vtkLinearSubdivisionFilter.h>
 #include <vtkPolyDataAlgorithm.h>
 
+#include <unistd.h>
+
 #include <fstream>
 #include <string>
 #include <iostream>
@@ -218,6 +220,13 @@ int main(int argc, char **argv)
 
   // write points
   vtkPoints *points = data->GetPoints();
+  if (!points)
+  {
+    cerr << "Error: dataset \"" << input << "\" had no points!" << endl;
+    pov.close();
+    unlink(output.c_str());
+    return -1;
+  }
   size_t nPts = points->GetNumberOfPoints();
 
   pov << "vertex_vectors {" << endl
@@ -249,6 +258,8 @@ int main(int argc, char **argv)
     if (!normals)
     {
       cerr << "Error: Normals not found" << endl;
+      pov.close();
+      unlink(output.c_str());
       return -1;
     }
 
