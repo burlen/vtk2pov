@@ -1,6 +1,7 @@
 #PBS -S /bin/bash
 #PBS -j eo
 #PBS -V
+#PBS -N vtk2pov
 cd $PBS_O_WORKDIR
 
 module load python
@@ -9,4 +10,4 @@ module load mesa/9.2.2-llvmpipe-dso
 
 PREFIX=/usr/common/graphics/ParaView/builds/vtk2pov/
 
-aprun -b -n 151 -N 2 -S 1 python-mpi ${PREFIX}/driver.py
+aprun -b -n 151 -N 2 python-mpi ${PREFIX}/driver.py
