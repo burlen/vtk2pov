@@ -13,6 +13,10 @@
 #include <vtkPolyDataAlgorithm.h>
 
 #include <unistd.h>
+#include <errno.h>
+
+#include <cstdio>
+#include <cstring>
 
 #include <fstream>
 #include <string>
@@ -42,6 +46,24 @@ void PrintUsage(po::options_description &optDef)
 
 // ----------------------------------------------------------------------------
 template <typename T>
+void streamVectors(FILE *pov, size_t ntup, T *pts)
+{
+  size_t nelem = ntup*3;
+  size_t vecBufSize = 3*sizeof(float)*ntup;
+
+  float *vecBuf = (float *)malloc(vecBufSize);
+
+  for (size_t i = 0; i < nelem; ++i)
+  {
+    vecBuf[i] = pts[i];
+  }
+
+  fwrite(vecBuf, 1, vecBufSize, pov);
+  free(vecBuf);
+}
+
+// ----------------------------------------------------------------------------
+template <typename T>
 void streamVectors(ostream &os, size_t ntup, T *pts)
 {
   for (size_t i = 0; i < ntup; ++i)
@@ -53,6 +75,323 @@ void streamVectors(ostream &os, size_t ntup, T *pts)
 }
 
 // ----------------------------------------------------------------------------
+int writeMesh2(vtkPolyData *data, const string &output, const string &mesh, int verbosity, int passNormals, int genNormals)
+{
+  ofstream pov(output.c_str());
+  if (!pov.good())
+  {
+    cerr << "Failed to open output \"" << output <<"\"" << endl;
+    return -1;
+  }
+
+  double bounds[6];
+  data->GetBounds(bounds);
+
+  pov
+    << "//bounds = [" << bounds[0] << ", " << bounds[1]
+    << ", " << bounds[2] << ", " << bounds[3]
+    << ", " <<  bounds[4] << ", " << bounds[5] << "]" << endl
+    << "#declare " << mesh << " = object {" << endl
+    << "mesh2 {" << endl;
+
+  // write points
+  vtkPoints *points = data->GetPoints();
+  if (!points)
+  {
+    cerr << "Error: dataset had no points!" << endl;
+    pov.close();
+    unlink(output.c_str());
+    return -1;
+  }
+  size_t nPts = points->GetNumberOfPoints();
+
+  if (verbosity)
+  {
+    cerr << "writing verts...";
+  }
+
+  pov << "vertex_vectors {" << endl
+    << nPts;
+
+  vtkDataArray *pts = points->GetData();
+  switch (points->GetDataType())
+  {
+  vtkTemplateMacro(
+      streamVectors(pov, nPts, static_cast<VTK_TT*>(pts->GetVoidPointer(0)));
+      );
+  }
+  pov << "}" << endl;
+
+  if (verbosity)
+  {
+    cerr << "done" << endl;
+  }
+
+  if (genNormals || passNormals)
+  {
+    if (verbosity)
+    {
+      cerr << "writing normals...";
+    }
+
+    // write normals
+    vtkDataArray *normals = data->GetPointData()->GetArray("Normals");
+    if (!normals)
+    {
+      cerr << "Error: Normals not found" << endl;
+      pov.close();
+      unlink(output.c_str());
+      return -1;
+    }
+
+    pov << "normal_vectors {" << endl
+      <<  nPts;
+
+    switch (normals->GetDataType())
+    {
+    vtkTemplateMacro(
+        streamVectors(pov, nPts, static_cast<VTK_TT*>(pts->GetVoidPointer(0)));
+        );
+    }
+    pov << "}" << endl;
+
+    if (verbosity)
+    {
+      cerr << "done" << endl;
+    }
+  }
+
+  // faces
+  if (verbosity)
+  {
+    cerr << "writing facets...";
+  }
+
+  vtkCellArray *tris = data->GetPolys();
+  size_t nTris = tris->GetNumberOfCells();
+
+  pov << "face_indices {" << endl
+    << nTris;
+
+  vtkIdType *pTris = data->GetPolys()->GetPointer();
+  for (size_t i = 0; i < nTris; ++i)
+  {
+    size_t ii = 4*i;
+    if (pTris[ii] != 3)
+    {
+      cerr << "cell " << i << " not a triangle!" << endl;
+      continue;
+    }
+    pov
+      << "," << endl
+      << "<" << pTris[ii+1] << ", " << pTris[ii+2] << ", " << pTris[ii+3] << ">";
+  }
+  pov << "}" << endl
+   << "}" << endl
+   << "}" << endl;
+
+  if (verbosity)
+  {
+    cerr << "done" << endl;
+  }
+
+  return 0;
+}
+
+// ----------------------------------------------------------------------------
+int writeMesh3(vtkPolyData *data, string &output, const string &mesh, int verbosity, int passNormals, int genNormals)
+{
+
+  if (verbosity)
+  {
+    cerr << "writing header...";
+  }
+
+  // strip the ext off the output file name.
+  size_t extPos = output.rfind('.');
+  if (extPos != string::npos)
+  {
+     output = output.substr(0, extPos);
+  }
+
+  string povFileName = output + ".pov";
+  string vertFileName = output + ".povv";
+  string triFileName = output + ".povt";
+  string normFileName = output + ".povn";
+
+  FILE *povFile = fopen(povFileName.c_str(), "wb");
+  if (!povFile)
+  {
+    const char *estr = strerror(errno);
+    cerr << endl
+      << "Error: Failed to open povFile \"" << povFileName <<"\"" << endl
+      << estr << endl;
+    return -1;
+  }
+
+  double bounds[6];
+  data->GetBounds(bounds);
+
+  fprintf(povFile, "//bounds = [%g, %g, %g, %g, %g, %g]\n",
+    bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]);
+
+  fprintf(povFile,"#declare %s = object {\n", mesh.c_str());
+  fprintf(povFile,"mesh3 {\n");
+
+  vtkPoints *points = data->GetPoints();
+  if (!points)
+  {
+    cerr << "Error: dataset had no points!" << endl;
+    fclose(povFile);
+    unlink(output.c_str());
+    return -1;
+  }
+  size_t nPts = points->GetNumberOfPoints();
+
+  fprintf(povFile, "vertex_vectors { %d, \"%s\" }\n", nPts, vertFileName.c_str());
+
+  if (genNormals || passNormals)
+  {
+    fprintf(povFile, "normal_vectors { %d, \"%s\" }\n", nPts, normFileName.c_str());
+  }
+
+  vtkCellArray *tris = data->GetPolys();
+  size_t nTris = tris->GetNumberOfCells();
+
+  fprintf(povFile, "face_indices { %d, \"%s\" }\n", nTris, triFileName.c_str());
+
+  fprintf(povFile, "}\n");
+  fprintf(povFile, "}\n");
+
+  fclose(povFile);
+
+  // write points
+  if (verbosity)
+  {
+    cerr << "done" << endl
+      << "writing verts...";
+  }
+
+  FILE *vertFile = fopen(vertFileName.c_str(), "wb");
+  if (!vertFile)
+  {
+    const char *estr = strerror(errno);
+    cerr << endl
+      << "Error: Failed to open pov verts \"" << vertFileName <<"\"" << endl
+      << estr << endl;
+    unlink(povFileName.c_str());
+    return -1;
+  }
+
+  vtkDataArray *pts = points->GetData();
+  switch (points->GetDataType())
+  {
+  vtkTemplateMacro(
+      streamVectors(vertFile, nPts, static_cast<VTK_TT*>(pts->GetVoidPointer(0)));
+      );
+  }
+
+  fclose(vertFile);
+
+  if (verbosity)
+  {
+    cerr << "done" << endl;
+  }
+
+  // write normals
+  if (genNormals || passNormals)
+  {
+    if (verbosity)
+    {
+      cerr << "writing normals...";
+    }
+
+    vtkDataArray *normals = data->GetPointData()->GetArray("Normals");
+    if (!normals)
+    {
+      cerr << endl << "Error: Normals not found" << endl;
+      unlink(povFileName.c_str());
+      unlink(vertFileName.c_str());
+      return -1;
+    }
+
+    FILE *normFile = fopen(normFileName.c_str(), "wb");
+    if (!normFile)
+    {
+      const char *estr = strerror(errno);
+      cerr << endl
+        << "Error: Failed to open pov norms \"" << normFileName <<"\"" << endl
+        << estr << endl;
+      unlink(povFileName.c_str());
+      unlink(vertFileName.c_str());
+      return -1;
+    }
+
+    switch (normals->GetDataType())
+    {
+    vtkTemplateMacro(
+        streamVectors(normFile, nPts, static_cast<VTK_TT*>(pts->GetVoidPointer(0)));
+        );
+    }
+
+    fclose(normFile);
+
+    if (verbosity)
+    {
+      cerr << "done" << endl;
+    }
+  }
+
+  // faces
+  if (verbosity)
+  {
+    cerr << "writing facets...";
+  }
+
+  size_t triBufSize = nTris*3*sizeof(int);
+  int *triBuf = (int *)malloc(triBufSize);
+
+  vtkIdType *pTris = data->GetPolys()->GetPointer();
+  for (size_t i = 0; i < nTris; ++i)
+  {
+    size_t ii = 4*i;
+    if (pTris[ii] != 3)
+    {
+      cerr << "cell " << i << " not a triangle!" << endl;
+      continue;
+    }
+
+    size_t jj = i*3;
+    triBuf[jj  ] = pTris[ii+1];
+    triBuf[jj+1] = pTris[ii+2];
+    triBuf[jj+2] = pTris[ii+3];
+  }
+
+  FILE *triFile = fopen(triFileName.c_str(), "wb");
+  if (!triFile)
+  {
+    const char *estr = strerror(errno);
+    cerr << endl
+      << "Error: Failed to open pov tris \"" << triFileName <<"\"" << endl
+      << estr << endl;
+    unlink(povFileName.c_str());
+    unlink(vertFileName.c_str());
+    unlink(triFileName.c_str());
+    return -1;
+  }
+
+  fwrite(triBuf, 1, triBufSize, triFile);
+  free(triBuf);
+  fclose(triFile);
+
+  if (verbosity)
+  {
+    cerr << "done" << endl;
+  }
+
+  return 0;
+}
+// ----------------------------------------------------------------------------
 int main(int argc, char **argv)
 {
   string input;
@@ -63,6 +402,7 @@ int main(int argc, char **argv)
   int verbosity = 0;
   int genNormals = 0;
   int passNormals = 0;
+  int mesh3 = 0;
 
 #ifdef ENABLE_BOOST
   // parse command line options
@@ -77,6 +417,7 @@ int main(int argc, char **argv)
       ("ndivisions", po::value<int>(&ndivisions), "number of subdivisions (2)")
       ("gen-normals", "generate normals (off)")
       ("pass-normals", "pass normals (off)")
+      ("mesh3", "write mesh3 format (off)")
       ("help", "print this message");
   try
   {
@@ -93,6 +434,7 @@ int main(int argc, char **argv)
     if (opts.count("verbose")) verbosity = 1;
     if (opts.count("gen-normals")) genNormals = 1;
     if (opts.count("pass-normals")) passNormals = 1;
+    if (opts.count("mesh3")) mesh3 = 1;
   }
   catch (std::exception &e)
   {
@@ -113,9 +455,10 @@ int main(int argc, char **argv)
   verbosity = argc>4?atoi(argv[4]):0;
 #endif
 
+
   if (verbosity)
   {
-    cerr << "processing VTK polydata...";
+    cerr << "processing polydata...";
   }
 
   vtkXMLPPolyDataReader *r = vtkXMLPPolyDataReader::New();
@@ -186,17 +529,8 @@ int main(int argc, char **argv)
 
   pdn->Update();
 
-  if (verbosity)
-  {
-     cerr << "done" << endl
-       << "writing POVRay verts...";
-  }
-
   vtkPolyData *data = pdn->GetOutput();
   data->Register(0);
-
-  double bounds[6];
-  data->GetBounds(bounds);
 
   pdn->Delete();
   tf->Delete();
@@ -204,115 +538,30 @@ int main(int argc, char **argv)
   cpd->Delete();
   r->Delete();
 
-  ofstream pov(output.c_str());
-  if (!pov.good())
+  if (verbosity)
   {
-    cerr << "Failed to open output \"" << output <<"\"" << endl;
-    return -1;
+     cerr << "done" << endl
+       << "writing mesh" << (mesh3?"3":"2") << "..." << endl;
   }
 
-  pov
-    << "//bounds = [" << bounds[0] << ", " << bounds[1]
-    << ", " << bounds[2] << ", " << bounds[3]
-    << ", " <<  bounds[4] << ", " << bounds[5] << "]" << endl
-    << "#declare " << mesh << " = object {" << endl
-    << "mesh2 {" << endl;
-
-  // write points
-  vtkPoints *points = data->GetPoints();
-  if (!points)
+  if (mesh3)
   {
-    cerr << "Error: dataset \"" << input << "\" had no points!" << endl;
-    pov.close();
-    unlink(output.c_str());
-    return -1;
+    if (writeMesh3(data, output, mesh, verbosity, passNormals, genNormals))
+    {
+      cerr << "Failed to write data for \"" << input << "\"" << endl;
+    }
   }
-  size_t nPts = points->GetNumberOfPoints();
-
-  pov << "vertex_vectors {" << endl
-    << nPts;
-
-  vtkDataArray *pts = points->GetData();
-  switch (points->GetDataType())
+  else
   {
-  vtkTemplateMacro(
-      streamVectors(pov, nPts, static_cast<VTK_TT*>(pts->GetVoidPointer(0)));
-      );
+    if (writeMesh2(data, output, mesh, verbosity, passNormals, genNormals))
+    {
+      cerr << "Failed to write data for \"" << input << "\"" << endl;
+    }
   }
-  pov << "}" << endl;
 
   if (verbosity)
   {
-    cerr << "done" << endl;
-  }
-
-  if (genNormals || passNormals)
-  {
-    if (verbosity)
-    {
-      cerr << "writing POVRay normals...";
-    }
-
-    // write normals
-    vtkDataArray *normals = data->GetPointData()->GetArray("Normals");
-    if (!normals)
-    {
-      cerr << "Error: Normals not found" << endl;
-      pov.close();
-      unlink(output.c_str());
-      return -1;
-    }
-
-    pov << "normal_vectors {" << endl
-      <<  nPts;
-
-    switch (normals->GetDataType())
-    {
-    vtkTemplateMacro(
-        streamVectors(pov, nPts, static_cast<VTK_TT*>(pts->GetVoidPointer(0)));
-        );
-    }
-    pov << "}" << endl;
-
-    if (verbosity)
-    {
-      cerr << "done" << endl;
-    }
-  }
-
-  // faces
-  if (verbosity)
-  {
-    cerr << "writing POVRay facets...";
-  }
-
-  vtkCellArray *tris = data->GetPolys();
-  size_t nTris = tris->GetNumberOfCells();
-
-  pov << "face_indices {" << endl
-    << nTris;
-
-  vtkIdType *pTris = data->GetPolys()->GetPointer();
-  for (size_t i = 0; i < nTris; ++i)
-  {
-    size_t ii = 4*i;
-    if (pTris[ii] != 3)
-    {
-      cerr << "cell " << i << " not a triangle!" << endl;
-      continue;
-    }
-    pov
-      << "," << endl
-      << "<" << pTris[ii+1] << ", " << pTris[ii+2] << ", " << pTris[ii+3] << ">";
-  }
-  pov << "}" << endl
-   << "}" << endl
-   << "}" << endl;
-
-  if (verbosity)
-  {
-    cerr << "done" << endl
-      << "processing complete!" << endl;
+    cerr << "processing complete!" << endl;
   }
 
   data->Delete();

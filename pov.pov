@@ -3,7 +3,8 @@
 
 global_settings { assumed_gamma 1.0 }
 
-#declare Cone = false;
+#declare Cone = true;
+#declare Mesh3 = false;
 
 #if (Cone)
 light_source {
@@ -13,7 +14,11 @@ light_source {
     parallel
 }
 
-#include "cone.pov"
+#if (Mesh3)
+  #include "cone.pov"
+#else
+  #include "cone3.pov"
+#end
 object {
     Surface
     pigment { Red }
