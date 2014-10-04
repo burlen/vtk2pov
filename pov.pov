@@ -5,6 +5,7 @@ global_settings { assumed_gamma 1.0 }
 
 #declare Cone = true;
 #declare Mesh3 = false;
+#declare DataRoot = "./data/";
 
 #if (Cone)
 light_source {
@@ -15,10 +16,11 @@ light_source {
 }
 
 #if (Mesh3)
-  #include "cone.pov"
+  #include concat(DataRoot, "cone.pov")
 #else
-  #include "cone3.pov"
+  #include concat(DataRoot, "cone3.pov")
 #end
+
 object {
     Surface
     pigment { Red }
@@ -34,7 +36,7 @@ light_source {
     parallel
 }
 
-#include "wave.pov"
+#include concat(DataRoot, "wave.pov")
 object {
     Surface
     pigment { Red }
