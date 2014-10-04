@@ -22,5 +22,5 @@ Testing
 To run the test execute the command on the included test data
 and launch povray using the included script.
 
-    ./bin/vtk2pov --input=./cone.pvtp --output=./cone.pov --verbosity=1 --subdivision=loop --ndivisions=4 --gen-normal
+    ./bin/vtk2pov --input=./data/cone.pvtp --output=./data/cone.pov --verbose --subdivision=loop --ndivisions=4
     povray pov.ini
