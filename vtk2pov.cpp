@@ -14,6 +14,7 @@
 
 #include <unistd.h>
 #include <errno.h>
+#include <sys/time.h>
 
 #include <cstdio>
 #include <cstring>
@@ -433,6 +434,9 @@ int writeMesh3(vtkPolyData *data, string &output, const string &mesh, int verbos
 // ----------------------------------------------------------------------------
 int main(int argc, char **argv)
 {
+  timeval startt;
+  gettimeofday(&startt, 0);
+
   string input;
   string output;
   string mesh = "Surface";
@@ -601,12 +605,17 @@ int main(int argc, char **argv)
     }
   }
 
-  if (verbosity)
-  {
-    cerr << "processing complete!" << endl;
-  }
-
   data->Delete();
 
+  if (verbosity)
+  {
+    timeval endt;
+    gettimeofday(&endt, 0);
+
+    double runt = ((double)endt.tv_sec) + ((double)endt.tv_usec/1e6)
+      - ((double)startt.tv_sec) - ((double)startt.tv_usec/1e6);
+
+    cerr << "processing completed in " << runt << " seconds"  << endl;
+  }
   return 0;
 }
