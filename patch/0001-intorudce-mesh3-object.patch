@@ -1,0 +1,808 @@
+From 398539060d84bf668408fff05b2e75623d779f72 Mon Sep 17 00:00:00 2001
+From: Burlen Loring <bloring@lbl.gov>
+Date: Fri, 3 Oct 2014 16:53:44 -0700
+Subject: [PATCH] intorudce mesh3 object
+
+Initial mesh3 format uses similar to mesh2 but all arrays
+are replaced by file path to binary representation of the
+arrays. this improves the performance and reduces the mesh
+file sizes.
+---
+ source/backend/parser/parse.cpp    | 721 +++++++++++++++++++++++++++++++++++++
+ source/backend/parser/parse.h      |   1 +
+ source/backend/parser/reswords.cpp |   1 +
+ source/backend/parser/reswords.h   |   1 +
+ 4 files changed, 724 insertions(+)
+
+diff --git a/source/backend/parser/parse.cpp b/source/backend/parser/parse.cpp
+index cf6ce44..eb9c0d9 100644
+--- a/source/backend/parser/parse.cpp
++++ b/source/backend/parser/parse.cpp
+@@ -3914,6 +3914,712 @@ ObjectPtr Parser::Parse_Mesh()
+ *
+ * FUNCTION
+ *
++*   Parse_Mesh3
++*
++* INPUT
++*
++* OUTPUT
++*
++* RETURNS
++*
++*   OBJECT
++*
++* AUTHOR
++*
++*   Burlen Loring
++*
++* DESCRIPTION
++*
++*   Read a triangle mesh - syntax version 3.
++*
++* CHANGES
++*
++*   Oct 2014 : Creation.
++*
++******************************************************************************/
++
++#include <sys/time.h>
++#include <iostream>
++using std::cerr;
++using std::endl;
++
++ObjectPtr Parser::Parse_Mesh3()
++{
++    timeval startt;
++    gettimeofday(&startt, NULL);
++
++    int i;
++    int number_of_normals, number_of_textures, number_of_triangles, number_of_vertices, number_of_uvcoords;
++    int number_of_normal_indices;
++    int a,b,c;
++    int n1, n2, n3;
++    bool found_normal_indices = false;
++    bool found_uv_indices = false;
++    bool fully_textured = true;
++    bool foundZeroNormal = false;
++
++    DBL l1, l2;
++    Vector3d D1, D2, P1, P2, P3, N1, N;
++    Vector3d Inside_Vect;
++
++    Vector2d UV1;
++    MeshVector *Normals = NULL;
++    MeshVector *Vertices = NULL;
++    TEXTURE **Textures = NULL;
++    MeshUVVector *UVCoords = NULL;
++    Mesh *Object;
++    MESH_TRIANGLE *Triangles;
++
++    Inside_Vect = Vector3d(0.0, 0.0, 0.0);
++
++    /* buffers for i/o */
++    float *verts_buf = 0;
++    float *normals_buf = 0;
++    float *uvcoords_buf = 0;
++    int *triangles_buf = 0;
++    int *uv_indices_buf = 0;
++    int *normal_indices_buf = 0;
++
++    POV_ULONG verts_buf_size = 0;
++    POV_ULONG normals_buf_size = 0;
++    POV_ULONG uvcoords_buf_size = 0;
++    POV_ULONG triangles_buf_size = 0;
++    POV_ULONG uv_indices_buf_size =  0;
++    POV_ULONG normal_indices_buf_size = 0;
++
++    const char *file_name = 0;
++    FILE *file = 0;
++
++    Parse_Begin();
++
++    if ((Object = reinterpret_cast<Mesh *>(Parse_Object_Id())) != NULL)
++        return(reinterpret_cast<ObjectPtr>(Object));
++
++    /* Create object. */
++    Object = new Mesh();
++
++    /* normals, uvcoords, and textures are optional */
++    number_of_vertices = 0;
++    number_of_uvcoords = 0;
++    number_of_textures = 0;
++    number_of_normals = 0;
++    number_of_normal_indices = 0;
++
++
++    /* -----------------  Get the Normals & UV Vectors & Textures ------------ */
++    EXPECT
++        /* -------------------  Get the Vertices ------------------- */
++        CASE(VERTEX_VECTORS_TOKEN)
++            if (number_of_vertices>0)
++            {
++                Warning(0, "Duplicate vertex_vectors block; ignoring previous block.");
++                POV_FREE(Vertices);
++            }
++
++            Parse_Begin();
++
++            number_of_vertices = (int)Parse_Float(); Parse_Comma();
++
++            if (number_of_vertices<=0)
++                Error("No vertices in triangle mesh.");
++
++            file_name = Parse_C_String(true);
++            if (!file_name)
++                Error("Missing vertex vector file");
++
++            // read the vertices from a binary file
++            file = fopen(file_name, "rb");
++            if (!file)
++                Error("Failed to open vertex vector file");
++
++            verts_buf_size = 3*sizeof(float)*number_of_vertices;
++            verts_buf = (float *)POV_MALLOC(verts_buf_size, "mesh3 i/o buffer");
++
++            if (fread(verts_buf, 1, verts_buf_size, file) != verts_buf_size)
++                Error("Failed to read vertex vectors");
++
++            fclose(file);
++
++            // copy into native data structures
++            Vertices = reinterpret_cast<MeshVector *>(POV_MALLOC(number_of_vertices*sizeof(MeshVector), "mesh3 data"));
++
++			for(i=0; i<number_of_vertices; ++i)
++			{
++                float *pv = verts_buf + 3*i;
++
++                Vertices[i] = MeshVector(pv[0], pv[1], pv[2]);
++			}
++
++            POV_FREE(verts_buf);
++
++            Parse_End();
++        END_CASE
++
++        CASE(NORMAL_VECTORS_TOKEN)
++            if (number_of_normals>0)
++            {
++                Warning(0, "Duplicate normal_vectors block; ignoring previous block.");
++                POV_FREE(Normals);
++            }
++
++            Parse_Begin();
++            number_of_normals = (int)Parse_Float(); Parse_Comma();
++
++            if (number_of_normals>0)
++            {
++                file_name = Parse_C_String(true);
++                if (!file_name)
++                    Error("Missing normals file");
++
++                // read the normals from a binary file
++                file = fopen(file_name, "rb");
++                if (!file)
++                    Error("Failed to open normals file");
++
++                normals_buf_size = 3*sizeof(float)*number_of_normals;
++                normals_buf = (float *)POV_MALLOC(normals_buf_size, "mesh3 i/o buffer");
++
++                if (fread(normals_buf, 1, normals_buf_size, file) != normals_buf_size)
++                    Error("Failed to read normals");
++
++                fclose(file);
++
++                // copy into native data structures
++                Normals = reinterpret_cast<MeshVector *>(POV_MALLOC(number_of_normals*sizeof(MeshVector), "mesh3 data"));
++
++				for(i=0; i<number_of_normals; ++i)
++				{
++                    float *pn = normals_buf + 3*i;
++
++					if((fabs(pn[X])<EPSILON) && (fabs(pn[Y])<EPSILON) && (fabs(pn[Z])<EPSILON))
++					{
++						pn[X] = 1.0f; // make it nonzero
++						if(!foundZeroNormal)
++							Warning(0,"Normal vector in mesh3 cannot be zero - changing it to <1,0,0>.");
++						foundZeroNormal = true;
++					}
++
++                    Normals[i] = MeshVector(pn[0], pn[1], pn[2]);
++                    Normals[i].normalize();
++				}
++
++                POV_FREE(normals_buf);
++            }
++
++            Parse_End();
++        END_CASE
++
++        CASE(UV_VECTORS_TOKEN)
++            if (number_of_uvcoords>0)
++            {
++                Warning(0, "Duplicate uv_vectors block; ignoring previous block.");
++                POV_FREE(UVCoords);
++            }
++
++            Parse_Begin();
++            number_of_uvcoords = (int)Parse_Float(); Parse_Comma();
++
++            if (number_of_uvcoords>0)
++            {
++                file_name = Parse_C_String(true);
++                if (!file_name)
++                    Error("Missing uvcoords file");
++
++                // read the uvcoords from a binary file
++                file = fopen(file_name, "rb");
++                if (!file)
++                    Error("Failed to open uvcoords file");
++
++                uvcoords_buf_size = 3*sizeof(float)*number_of_uvcoords;
++                uvcoords_buf = (float *)POV_MALLOC(uvcoords_buf_size, "mesh3 i/o buffer");
++
++                if (fread(uvcoords_buf, 1, uvcoords_buf_size, file) != uvcoords_buf_size)
++                    Error("Failed to read uvcoords");
++
++                fclose(file);
++
++                // copy into native data structures
++                UVCoords = reinterpret_cast<MeshUVVector *>(POV_MALLOC(number_of_uvcoords*sizeof(MeshUVVector), "mesh3 data"));
++
++				for(i=0; i<number_of_uvcoords; ++i)
++				{
++                    float *puv = uvcoords_buf + 2*i;
++                    UVCoords[i] = MeshUVVector(puv[0], puv[1]);
++				}
++
++                POV_FREE(uvcoords_buf);
++            }
++
++            Parse_End();
++        END_CASE
++
++        /*OTHERWISE
++            UNGET
++            EXIT
++        END_CASE
++    END_EXPECT
++
++    EXPECT*/
++        CASE(TEXTURE_LIST_TOKEN)
++            Parse_Begin();
++
++            number_of_textures = (int)Parse_Float();  Parse_Comma();
++
++            if (number_of_textures>0)
++            {
++                Textures = reinterpret_cast<TEXTURE **>(POV_MALLOC(number_of_textures*sizeof(TEXTURE *), "triangle mesh data"));
++
++                for(i=0; i<number_of_textures; i++)
++                {
++                    /*
++                    GET(TEXTURE_ID_TOKEN)
++                    Textures[i] = Copy_Texture_Pointer((reinterpret_cast<EXTURE *>(Token.Data));
++                    */
++                    GET(TEXTURE_TOKEN);
++                    Parse_Begin();
++                    Textures[i] = Parse_Texture();
++                    Post_Textures(Textures[i]);
++                    Parse_End();
++                    Parse_Comma();
++                }
++            }
++
++            Parse_End();
++            EXIT
++        END_CASE
++
++        OTHERWISE
++            UNGET
++            EXIT
++        END_CASE
++
++    END_EXPECT
++
++    if (number_of_vertices == 0)
++        Error("Vertex vectors not found in mesh2");
++
++    /* first make sure we at least have one UV coordinate */
++    if (number_of_uvcoords == 0)
++    {
++        number_of_uvcoords = 1;
++        UVCoords = reinterpret_cast<MeshUVVector *>(POV_MALLOC(number_of_uvcoords*sizeof(MeshUVVector), "triangle mesh data"));
++        UVCoords[0][U] = 0;
++        UVCoords[0][V] = 0;
++    }
++
++    /* -------------------  Get the Faces ------------------- */
++    GET(FACE_INDICES_TOKEN)
++            Parse_Begin();
++
++    /* number faces is mandatory, so we ask how many there are */
++    number_of_triangles = Parse_Float(); Parse_Comma();
++
++    if (number_of_triangles == 0)
++    {
++        Error("No triangles in triangle mesh.");
++    }
++
++    file_name = Parse_C_String(true);
++    if (!file_name)
++        Error("Missing triangles file");
++
++    // read the triangles from a binary file
++    file = fopen(file_name, "rb");
++    if (!file)
++        Error("Failed to open triangles file");
++
++    triangles_buf_size = 3*sizeof(int)*number_of_triangles;
++    triangles_buf = (int *)POV_MALLOC(triangles_buf_size, "mesh3 i/o buffer");
++
++    if (fread(triangles_buf, 1, triangles_buf_size, file) != triangles_buf_size)
++        Error("Failed to read triangles");
++
++    fclose(file);
++
++    /* allocate memory for triangles */
++    Triangles = reinterpret_cast<MESH_TRIANGLE *>(POV_MALLOC(number_of_triangles*sizeof(MESH_TRIANGLE), "triangle mesh data"));
++
++    /* start reading triangles */
++
++    for(i=0; i<number_of_triangles; i++)
++    {
++        int ii = 3*i;
++
++		/* convert the vector to integers */
++		a = triangles_buf[ii  ];
++		b = triangles_buf[ii+1];
++		c = triangles_buf[ii+2];
++
++        /* a--;b--;c--; use this to start external stuff at 1 */
++        if ( a<0 || b<0 || c<0 ||
++             a>=number_of_vertices || b>=number_of_vertices ||
++             c>=number_of_vertices)
++        {
++            Error("Mesh face index out of range.");
++        }
++
++        /* Init triangle. */
++        Object->Init_Mesh_Triangle(&Triangles[i]);
++
++        /* assign the vertices */
++        Triangles[i].P1 = a;
++        Triangles[i].P2 = b;
++        Triangles[i].P3 = c;
++
++        //  TODO -- figure out how to handle texture indices
++        Triangles[i].Texture = -1;
++        Triangles[i].Texture2 = -1;
++        Triangles[i].Texture3 = -1;
++        fully_textured = false;
++    }
++
++    Parse_End();
++
++    /* now we get the uv_indices & normal_indices in either order */
++
++    EXPECT
++        CASE(UV_INDICES_TOKEN)
++            if (found_uv_indices)
++            {
++                Error("Only one uv_indices section is allowed in mesh2");
++            }
++            found_uv_indices = true;
++            Parse_Begin();
++
++            if (Parse_Float() != number_of_triangles)
++                Error("Number of uv indices must equal number of faces.");
++            Parse_Comma();
++
++            file_name = Parse_C_String(true);
++            if (!file_name)
++                Error("Missing uv_indices file");
++
++            // read the uv_indices from a binary file
++            file = fopen(file_name, "rb");
++            if (!file)
++                Error("Failed to open uv_indices file");
++
++            uv_indices_buf_size = 3*sizeof(int)*number_of_triangles;
++            uv_indices_buf = (int *)POV_MALLOC(uv_indices_buf_size, "mesh3 i/o buffer");
++
++            if (fread(uv_indices_buf, 1, uv_indices_buf_size, file) != uv_indices_buf_size)
++                Error("Failed to read uv_indices");
++
++            fclose(file);
++
++            for (i=0; i<number_of_triangles; i++)
++            {
++                int ii = 3*i;
++
++				/* convert the vector to integers */
++				a = uv_indices_buf[ii];
++				b = uv_indices_buf[ii+1];
++				c = uv_indices_buf[ii+2];
++
++                /* a--;b--;c--; use this to start external stuff at 1 */
++                if ( a<0 || b<0 || c<0 ||
++                     a>=number_of_uvcoords || b>=number_of_uvcoords ||
++                     c>=number_of_uvcoords)
++                {
++                    Error("Mesh UV index out of range.");
++                }
++
++                /* assign the uv coordinate */
++                Triangles[i].UV1 = a;
++                Triangles[i].UV2 = b;
++                Triangles[i].UV3 = c;
++            }
++            Parse_End();
++            /*EXIT*/
++        END_CASE
++
++    /*
++        OTHERWISE
++            UNGET
++            EXIT
++        END_CASE
++    END_EXPECT
++
++    EXPECT
++    */
++        CASE(NORMAL_INDICES_TOKEN)
++            if (found_normal_indices)
++            {
++                Error("Only one normal_indices section is allowed in mesh2");
++            }
++            found_normal_indices = true;
++            Parse_Begin();
++
++            /*
++            Change - if fewer normals than triangles, then no problem - the
++            rest will be flat triangles.
++
++            if (Parse_Float() != number_of_triangles)
++                Error("Number of normal indices must equal number of faces.");
++            */
++            number_of_normal_indices = Parse_Float();
++            if (number_of_normal_indices > number_of_triangles)
++                Error("Number of normal indices cannot be more than the number of faces.");
++
++            Parse_Comma();
++
++            file_name = Parse_C_String(true);
++            if (!file_name)
++                Error("Missing normal_indices file");
++
++            // read the normal_indices from a binary file
++            file = fopen(file_name, "rb");
++            if (!file)
++                Error("Failed to open normal_indices file");
++
++            normal_indices_buf_size = 3*sizeof(int)*number_of_normal_indices;
++            normal_indices_buf = (int *)POV_MALLOC(normal_indices_buf_size, "mesh3 i/o buffer");
++
++            if (fread(normal_indices_buf, 1, normal_indices_buf_size, file) != normal_indices_buf_size)
++                Error("Failed to read normal_indices");
++
++            fclose(file);
++
++            for (i=0; i<number_of_normal_indices; i++)
++            {
++                int ii = 3*i;
++
++				/* convert the vector to integers */
++				a = normal_indices_buf[ii];
++				b = normal_indices_buf[ii+1];
++				c = normal_indices_buf[ii+2];
++
++                /* a--;b--;c--; use this to start external stuff at 1 */
++                if ( a<0 || b<0 ||
++                     c<0 ||
++                     a>=number_of_normals || b>=number_of_normals ||
++                     c>=number_of_normals)
++                {
++                    Error("Mesh normal index out of range.");
++                }
++
++                /* assign the uv coordinate */
++                Triangles[i].N1 = a;
++                Triangles[i].N2 = b;
++                Triangles[i].N3 = c;
++            }
++            Parse_End();
++            /*EXIT*/
++        END_CASE
++
++        OTHERWISE
++            UNGET
++            EXIT
++        END_CASE
++    END_EXPECT
++
++    /* ----------------------------------------------------- */
++    /* ----------------------------------------------------- */
++
++    EXPECT
++        CASE(INSIDE_VECTOR_TOKEN)
++            Parse_Vector(Inside_Vect);
++        END_CASE
++
++        OTHERWISE
++            UNGET
++            EXIT
++        END_CASE
++    END_EXPECT
++
++    if (fully_textured)
++        Object->Type |= TEXTURED_OBJECT;
++
++    if (!found_uv_indices)
++    {
++        if (number_of_uvcoords==number_of_vertices)
++        {
++            for (i=0; i<number_of_triangles; i++)
++            {
++                Triangles[i].UV1 = Triangles[i].P1;
++                Triangles[i].UV2 = Triangles[i].P2;
++                Triangles[i].UV3 = Triangles[i].P3;
++            }
++        }
++        else if (number_of_uvcoords==1)
++        {
++            for (i=0; i<number_of_triangles; i++)
++            {
++                Triangles[i].UV1 = 0;
++                Triangles[i].UV2 = 0;
++                Triangles[i].UV3 = 0;
++            }
++        }
++        else
++        {
++            Error("Missing uv_indicies section in mesh2.");
++        }
++    }
++
++    if (!found_normal_indices)
++    {
++        if (number_of_normals==number_of_vertices)
++        {
++            /* If number of normals matches number of vertices, then assume
++               that the normal_indices are the same as the triangle indices
++               (left out for file size reasons).
++               So, we pretend that we read in some normal_indices
++            */
++            number_of_normal_indices = number_of_triangles;
++
++            for (i=0; i<number_of_triangles; i++)
++            {
++                Triangles[i].N1 = Triangles[i].P1;
++                Triangles[i].N2 = Triangles[i].P2;
++                Triangles[i].N3 = Triangles[i].P3;
++            }
++        }
++        else if (number_of_normals)
++        {
++            Error("Missing normal_indicies section in mesh2.");
++        }
++    }
++
++    /* ---------------- Compute Triangle Normals ---------------- */
++
++    /* reallocate the normals stuff */
++    if (!number_of_normals)
++        Normals = reinterpret_cast<MeshVector *>(POV_MALLOC(number_of_triangles*sizeof(MeshVector), "triangle mesh data"));
++    else
++        Normals = reinterpret_cast<MeshVector *>(POV_REALLOC(Normals, (number_of_normals+number_of_triangles)*sizeof(MeshVector), "triangle mesh data"));
++
++    for (i=0; i<number_of_triangles; i++)
++    {
++        a = (int) Triangles[i].P1;
++        b = (int) Triangles[i].P2;
++        c = (int) Triangles[i].P3;
++        n1 = (int) Triangles[i].N1;
++        n2 = (int) Triangles[i].N2;
++        n3 = (int) Triangles[i].N3;
++
++        P1 = Vector3d(Vertices[a]);
++        P2 = Vector3d(Vertices[b]);
++        P3 = Vector3d(Vertices[c]);
++
++        Triangles[i].Smooth = false;
++
++        /* compute the normal (check for smoothness) */
++        /* if number_of_normal_indices > 0, then the first triangles
++           are smooth and the rest are flat */
++        if (i<number_of_normal_indices)
++        {
++            /* Check for equal normals. */
++            D1 = Vector3d(Normals[n1]) - Vector3d(Normals[n2]);
++            D2 = Vector3d(Normals[n1]) - Vector3d(Normals[n3]);
++
++            l1 = D1.lengthSqr();
++            l2 = D2.lengthSqr();
++
++            if ((fabs(l1) > EPSILON) || (fabs(l2) > EPSILON))
++            {
++                /* Smooth triangle. */
++                Object->Compute_Mesh_Triangle(&Triangles[i], true, P1, P2, P3, N);
++                Triangles[i].Smooth = true;
++            }
++            else
++            {
++                /* Flat triangle. */
++                Object->Compute_Mesh_Triangle(&Triangles[i], false, P1, P2, P3, N);
++            }
++        }
++        else
++        {
++            /* Flat triangle. */
++            Object->Compute_Mesh_Triangle(&Triangles[i], false, P1, P2, P3, N);
++        }
++
++        /* assign the triangle normal that we just computed */
++        Triangles[i].Normal_Ind = i+number_of_normals;
++        Normals[i+number_of_normals] = MeshVector(N);
++    }
++
++    /* now remember how many normals we really have */
++    number_of_normals += number_of_triangles;
++
++    /* ----------------------------------------------------- */
++
++    /* Init triangle mesh data. */
++    Object->Data = reinterpret_cast<MESH_DATA *>(POV_MALLOC(sizeof(MESH_DATA), "triangle mesh data"));
++    Object->Data->References = 1;
++    Object->Data->Tree = NULL;
++    /* NK 1998 */
++    /*YS* 31/12/1999 */
++
++    if( (fabs(Inside_Vect[X]) < EPSILON) &&  (fabs(Inside_Vect[Y]) < EPSILON) &&  (fabs(Inside_Vect[Z]) < EPSILON))
++    {
++        Object->has_inside_vector=false;
++        Object->Type |= PATCH_OBJECT;
++    }
++    else
++    {
++        Object->Data->Inside_Vect = Inside_Vect.normalized();
++        Object->has_inside_vector=true;
++        Object->Type &= ~PATCH_OBJECT;
++    }
++    /*YS*/
++
++    /* copy pointers to normals, triangles, textures, and vertices. */
++    Object->Data->Normals   = Normals;
++    Object->Data->Triangles = Triangles;
++    Object->Data->Vertices  = Vertices;
++    Object->Data->UVCoords  = UVCoords;
++    /* [LSK] Removed "Data->" */
++    Object->Textures  = Textures;
++
++    /* copy number of for normals, textures, triangles and vertices. */
++    Object->Data->Number_Of_Normals = number_of_normals;
++    Object->Data->Number_Of_Triangles = number_of_triangles;
++    Object->Data->Number_Of_Vertices = number_of_vertices;
++    Object->Data->Number_Of_UVCoords  = number_of_uvcoords;
++    Object->Number_Of_Textures = number_of_textures;
++
++    if (number_of_textures)
++    {
++        Set_Flag(Object, MULTITEXTURE_FLAG);
++    }
++
++    /* Create bounding box. */
++    Object->Compute_BBox();
++
++    /* Parse object modifiers. */
++    Parse_Object_Mods(reinterpret_cast<ObjectPtr>(Object));
++
++    /* Create bounding box tree. */
++    Object->Build_Mesh_BBox_Tree();
++
++/*
++    Render_Info("Mesh2: %ld bytes: %ld vertices, %ld normals, %ld textures, %ld triangles, %ld uv-coords\n",
++        Object->Data->Number_Of_Normals*sizeof(MeshVector)+
++        Object->Number_Of_Textures*sizeof(TEXTURE *)+
++        Object->Data->Number_Of_Triangles*sizeof(MESH_TRIANGLE)+
++        Object->Data->Number_Of_Vertices*sizeof(MeshVector)+
++        Object->Data->Number_Of_UVCoords*sizeof(MeshUVVector),
++        Object->Data->Number_Of_Vertices,
++        Object->Data->Number_Of_Normals,
++        Object->Number_Of_Textures,
++        Object->Data->Number_Of_Triangles,
++        Object->Data->Number_Of_UVCoords);
++*/
++
++    timeval endt;
++    gettimeofday(&endt, NULL);
++    cerr << "mesh3 parsed in "
++       << static_cast<double>(endt.tv_sec) + static_cast<double>(endt.tv_usec)/1.0e6
++        - static_cast<double>(startt.tv_sec) - static_cast<double>(startt.tv_usec)/1.0e6
++       << " seconds" << endl;
++
++    return(reinterpret_cast<ObjectPtr>(Object));
++}
++
++/*****************************************************************************
++*
++* FUNCTION
++*
+ *   Parse_Mesh2
+ *
+ * INPUT
+@@ -3939,6 +4645,9 @@ ObjectPtr Parser::Parse_Mesh()
+ ******************************************************************************/
+ ObjectPtr Parser::Parse_Mesh2()
+ {
++    timeval startt;
++    gettimeofday(&startt, NULL);
++
+     int i;
+     int number_of_normals, number_of_textures, number_of_triangles, number_of_vertices, number_of_uvcoords;
+     int number_of_normal_indices;
+@@ -4514,6 +5223,13 @@ ObjectPtr Parser::Parse_Mesh2()
+         Object->Data->Number_Of_UVCoords);
+ */
+ 
++    timeval endt;
++    gettimeofday(&endt, NULL);
++    cerr << "mesh2 parsed in "
++       << static_cast<double>(endt.tv_sec) + static_cast<double>(endt.tv_usec)/1.0e6
++        - static_cast<double>(startt.tv_sec) - static_cast<double>(startt.tv_usec)/1.0e6
++       << " seconds" << endl;
++
+     return(reinterpret_cast<ObjectPtr>(Object));
+ }
+ 
+@@ -6333,6 +7049,11 @@ ObjectPtr Parser::Parse_Object ()
+         END_CASE
+         /* NK ---- */
+ 
++        CASE (MESH3_TOKEN)
++            Object = Parse_Mesh3();
++            EXIT
++        END_CASE
++
+         CASE (TEXT_TOKEN)
+             Object = Parse_TrueType ();
+             EXIT
+diff --git a/source/backend/parser/parse.h b/source/backend/parser/parse.h
+index efcf7c4..77e61a3 100644
+--- a/source/backend/parser/parse.h
++++ b/source/backend/parser/parse.h
+@@ -593,6 +593,7 @@ class Parser : public Task
+         ObjectPtr Parse_Triangle();
+         ObjectPtr Parse_Mesh();
+         ObjectPtr Parse_Mesh2();
++        ObjectPtr Parse_Mesh3();
+         TEXTURE *Parse_Mesh_Texture(TEXTURE **t2, TEXTURE **t3);
+         ObjectPtr Parse_TrueType(void);
+         void Parse_Blob_Element_Mods(Blob_Element *Element);
+diff --git a/source/backend/parser/reswords.cpp b/source/backend/parser/reswords.cpp
+index 4b4b29d..a6e12ee 100644
+--- a/source/backend/parser/reswords.cpp
++++ b/source/backend/parser/reswords.cpp
+@@ -349,6 +349,7 @@ const RESERVED_WORD Reserved_Words[LAST_TOKEN] = {
+     {MERGE_TOKEN, "merge"},
+     {MESH_CAMERA_TOKEN, "mesh_camera"},
+     {MESH2_TOKEN, "mesh2"},
++    {MESH3_TOKEN, "mesh3"},
+     {MESH_TOKEN, "mesh"},
+     {METALLIC_TOKEN, "metallic"},
+     {METHOD_TOKEN, "method"},
+diff --git a/source/backend/parser/reswords.h b/source/backend/parser/reswords.h
+index edbf1b0..6aace7a 100644
+--- a/source/backend/parser/reswords.h
++++ b/source/backend/parser/reswords.h
+@@ -559,6 +559,7 @@ enum TOKEN_IDS
+     UV_MAPPING_TOKEN,
+     UV_VECTORS_TOKEN,
+     MESH2_TOKEN,
++    MESH3_TOKEN,
+     VERTEX_VECTORS_TOKEN,
+     NORMAL_VECTORS_TOKEN,
+     FACE_INDICES_TOKEN,
+-- 
+1.8.3.1
+

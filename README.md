@@ -26,15 +26,16 @@ options set. The --input and --output options are required. Use
 
 Output format
 =============
-There are two options for output, mesh2 and mesh3. mesh3 is a
-hacked binary format that can only be used with a patched version
-of povray 3.7.1. The patch is included in the povray directory.
-Patching povary can be done as follows:
+There are two options for output, mesh2 and mesh3. mesh2 is povray's
+format. It's completely ASCII based and hella slow and bloated. mesh3
+is a hacked binary format that is orders of magnitude faster and more
+compact. However mesh3 can only be used with a patched version of povray
+3.7.1. The patch is included in vtk2pov patch directory.  Patching povary
+can be done as follows:
 
-    git clone https://github.com/POV-Ray/povray.git
-    cd povray
+    cd ${povray_sources}
     git checkout 7086fa93080acea
-    git am -3 0001-povray-mesh3-format.patch
+    git am -3 ${vtk2pov_sources}/patch/0001-intorudce-mesh3-object.patch
 
 Now recompile and install the patched povray. This will enable mesh3
 format and adds timing to both mesh2 and mesh3 parsing.
