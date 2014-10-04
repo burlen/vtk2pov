@@ -8,10 +8,10 @@ nproc = mpi.COMM_WORLD.Get_size()
 
 data_dir = '/scratch3/scratchdirs/loring/dipole3-den-isos-all/'
 in_file = '%s/den-iso-%04d-0001.pvtp'%(data_dir, rank)
-out_file = '%s/den-iso-%04d-0001.pov'%(data_dir+'/0001-pov-nn/', rank)
+out_file = '%s/den-iso-%04d-0001.pov'%(data_dir+'/0001-pov3-nn/', rank)
 prefix = '/usr/common/graphics/ParaView/builds/vtk2pov'
 
-cmd='%s/bin/vtk2pov --input=%s --output=%s'%(prefix, in_file, out_file)
+cmd='%s/bin/vtk2pov --mesh3 --input=%s --output=%s'%(prefix, in_file, out_file)
 
 sys.stderr.write('=====%d %s\n'%(rank, cmd))
 os.system(cmd)
