@@ -207,17 +207,33 @@ int writeMesh3(vtkPolyData *data, string &output, const string &mesh, int verbos
     cerr << "writing header...";
   }
 
-  // strip the ext off the output file name.
-  size_t extPos = output.rfind('.');
-  if (extPos != string::npos)
-  {
-     output = output.substr(0, extPos);
-  }
+  // for the metadata file use the full path so
+  // it ends up where user intended.
+  string povFileName = output;
 
-  string povFileName = output + ".pov";
+  // strip the extension
+  size_t dotPos = output.rfind('.');
+  if (dotPos != string::npos)
+  {
+     output = output.substr(0, dotPos);
+  }
+  // paths where binary datafiles are written
   string vertFileName = output + ".povv";
   string triFileName = output + ".povt";
   string normFileName = output + ".povn";
+
+  // for portability we strip off the path and use
+  // a relative path from externally provided script
+  // variable
+  size_t slashPos = output.rfind('/');
+  if (slashPos == string::npos)
+  {
+    slashPos = 0;
+  }
+  else
+  {
+    slashPos += 1;
+  }
 
   FILE *povFile = fopen(povFileName.c_str(), "wb");
   if (!povFile)
@@ -232,12 +248,26 @@ int writeMesh3(vtkPolyData *data, string &output, const string &mesh, int verbos
   double bounds[6];
   data->GetBounds(bounds);
 
+  // the first line of the file will have the bounding box
+  // to facilitaate scene placement
   fprintf(povFile, "//bounds = [%g, %g, %g, %g, %g, %g]\n",
     bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]);
 
+  // for portability all the internal paths need to  be
+  // relative to a user provided script var. if the user
+  // doesn't set it fallback to the current dir.
+  fprintf(povFile, "#ifndef(DataRoot)\n");
+  fprintf(povFile, "  #declare DataRoot = \"./\";\n");
+  fprintf(povFile, "#end\n");
+
+  // we'll store the mesh in a named object to facilitate
+  // further manipulations
   fprintf(povFile,"#declare %s = object {\n", mesh.c_str());
   fprintf(povFile,"mesh3 {\n");
 
+  // the vertex_vector keyword needs the number of vertices
+  // and a path to the binary datafile given relative to
+  // user provided data root.
   vtkPoints *points = data->GetPoints();
   if (!points)
   {
@@ -248,24 +278,33 @@ int writeMesh3(vtkPolyData *data, string &output, const string &mesh, int verbos
   }
   size_t nPts = points->GetNumberOfPoints();
 
-  fprintf(povFile, "vertex_vectors { %d, \"%s\" }\n", nPts, vertFileName.c_str());
+  fprintf(povFile, "vertex_vectors { %d, concat(DataRoot, \"%s\") }\n",
+    nPts, vertFileName.substr(slashPos).c_str());
 
+  // the normal_vectors keyword needs the number of normals
+  // and a relative path (from user provided data root) to
+  // the binary file holding the normals.
   if (genNormals || passNormals)
   {
-    fprintf(povFile, "normal_vectors { %d, \"%s\" }\n", nPts, normFileName.c_str());
+    fprintf(povFile, "normal_vectors { %d,  concat(DataRoot, \"%s\") }\n",
+      nPts, normFileName.substr(slashPos).c_str());
   }
 
   vtkCellArray *tris = data->GetPolys();
   size_t nTris = tris->GetNumberOfCells();
 
-  fprintf(povFile, "face_indices { %d, \"%s\" }\n", nTris, triFileName.c_str());
+  // the face_indices keyword needs the number of triangles
+  // and the relative path (from the user provided data root)
+  // to the binary point list describing the faces.
+  fprintf(povFile, "face_indices { %d, concat(DataRoot, \"%s\") }\n",
+    nTris, triFileName.substr(slashPos).c_str());
 
   fprintf(povFile, "}\n");
   fprintf(povFile, "}\n");
 
   fclose(povFile);
 
-  // write points
+  // write points in binary format
   if (verbosity)
   {
     cerr << "done" << endl
@@ -298,7 +337,7 @@ int writeMesh3(vtkPolyData *data, string &output, const string &mesh, int verbos
     cerr << "done" << endl;
   }
 
-  // write normals
+  // write normals in binary format
   if (genNormals || passNormals)
   {
     if (verbosity)
@@ -342,7 +381,7 @@ int writeMesh3(vtkPolyData *data, string &output, const string &mesh, int verbos
     }
   }
 
-  // faces
+  // write the faces in a binary format
   if (verbosity)
   {
     cerr << "writing facets...";
@@ -456,6 +495,9 @@ int main(int argc, char **argv)
 #endif
 
 
+  // here's a small vtk pipeline that reads the data,
+  // cleans duplicate points, and optionally, subdivides,
+  // triangulates, computes or passes normals.
   if (verbosity)
   {
     cerr << "processing polydata...";
